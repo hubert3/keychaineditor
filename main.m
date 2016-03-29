@@ -45,7 +45,7 @@ void printUsage() {
     fprintf(stdout, "\n\e[4;30mUsage:\e[0;31m ./keychaineditor commands \
           \n\e[4;30mCommands can be:\e[0;31m\
           \n\t--help:    Prints the usage.\
-          \n\t--action:  Can be either min-dump, dump, edit, delete.\
+          \n\t--action:  Can be either min-dump, dump, dump-keys, edit, delete.\
           \n\t--find:    uses 'CONTAINS' to find strings from the dump.\
           \n\t--account: Account name for the keychain item you want to edit/delete.\
           \n\t--service: Service name for the keychain item you want to edit/delete.\
@@ -371,8 +371,33 @@ void prepareMinimumOutput(NSArray *results) {
     }
 }
 
+void prepareKeysOutput(NSArray *results, NSString *find) {
+
+    //NSLog(@"%@", results);    
+    NSDictionary *eachItemFromResults = [[NSDictionary alloc] init];
+    NSString *agroup = [[NSString alloc] init];
+    NSString *atag = [[NSString alloc] init];
+    NSString *data = [[NSString alloc] init];
+    
+    fprintf(stdout, "Access Group                                       | Application Tag                                         | Data\n");
+    fprintf(stdout, "%s | %s | %s\n",
+            [[@"" stringByPaddingToLength:50 withString:@"-" startingAtIndex:0] UTF8String], \
+            [[@"" stringByPaddingToLength:55 withString:@"-" startingAtIndex:0] UTF8String], \
+            [[@"" stringByPaddingToLength:100 withString:@"-" startingAtIndex:0] UTF8String] \
+            );
+    
+    for (eachItemFromResults in results) {
+        agroup = determineTypeAndReturnNSString([eachItemFromResults objectForKey:(__bridge id)kSecAttrAccessGroup]);
+        if ( (find == nil) || [agroup containsString:find]) {
+            atag = determineTypeAndReturnNSString([eachItemFromResults objectForKey:(__bridge id)kSecAttrApplicationTag]);
+            data = determineTypeAndReturnNSString([eachItemFromResults objectForKey:(__bridge id)kSecValueData]);
+            fprintf(stdout, "%*.*s   %*.*s   %*.*s\n", -50, 50, [agroup UTF8String], -55, 55, [atag UTF8String], -100, 100, [data UTF8String]);
+        }
+    }
+}
+
 /*
- Function that dumps all the keychain items.
+ Function that dumps all the genp keychain items
  
  TODO: Do I want to get rid of the standard apple entries.
  */
@@ -447,6 +472,60 @@ OSStatus dumpKeychain(NSString *action, NSString *find) {
     return status;
 }
 
+
+OSStatus dumpKeys(NSString *action, NSString *find) {
+    
+    NSMutableDictionary* query = [[NSMutableDictionary alloc] init];
+    NSMutableArray* finalResult = [[NSMutableArray alloc] init];
+    
+    NSString *eachConstant = [[NSString alloc] init];
+    OSStatus status = 0;
+    
+    //NSArray *secClasses = @[(__bridge NSString *)kSecClassGenericPassword, (__bridge NSString *)kSecClassKey];
+    
+    NSArray *constants = @[(__bridge NSString *)kSecAttrAccessibleAfterFirstUnlock,
+                           (__bridge NSString *)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                           (__bridge NSString *)kSecAttrAccessibleAlways,
+                           (__bridge NSString *)kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+                           (__bridge NSString *)kSecAttrAccessibleAlwaysThisDeviceOnly,
+                           (__bridge NSString *)kSecAttrAccessibleWhenUnlocked,
+                           (__bridge NSString *)kSecAttrAccessibleWhenUnlockedThisDeviceOnly];
+    
+    /*
+     Prepare a query to dump all the items.
+     Class = Generic Password.
+     kSecMatchLimit = kSecMatchLimitAll, will actually dump all the items.
+     kSecReturnAttributes = True, will return the Attributes associated with the item.
+     kSecReturnData = True, will return the data associated with the item.
+     
+     TODO: I am just dealing with genp class of items, if a requirment occurs
+     to other items like inetp, certs, I will extend it.
+     */
+    
+    for (eachConstant in constants) {
+        
+        [query setObject:(__bridge id)kSecClassKey forKey:(__bridge id)kSecClass];
+        [query setObject:eachConstant forKey:(__bridge id<NSCopying>)(kSecAttrAccessible)];
+        [query setObject:(__bridge id)kSecMatchLimitAll forKey:(__bridge id)kSecMatchLimit];
+        [query setObject:(id)kCFBooleanTrue forKey:(__bridge id)kSecReturnAttributes];
+        [query setObject:(id)kCFBooleanTrue forKey:(__bridge id)kSecReturnData];
+        
+        /*
+         On success, a dictionary of all the items are returned.
+         */
+        CFTypeRef results = nil;
+        
+        status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &results);
+        
+        if (status == errSecSuccess) {
+            
+            [finalResult addObjectsFromArray: (__bridge NSArray *)results];
+        }
+    }
+    
+    prepareKeysOutput(finalResult, find);
+    return status;
+}
 
 /*
  Function that queries an item in keychain and updates the item value.
@@ -629,7 +708,7 @@ int main(int argc, char *argv[]) {
          '--action' can only be min-dump, dump, edit or delete.
          */
         
-        if (![@[@"min-dump", @"dump", @"edit", @"delete"] containsObject:action]) {
+        if (![@[@"min-dump", @"dump-keys", @"dump", @"edit", @"delete"] containsObject:action]) {
             fprintf(stderr, "\e[0;31mInvalid action passed. Please use --help to get usage information.\n\e[0;30m");
             return EXIT_FAILURE;
         }
@@ -639,7 +718,13 @@ int main(int argc, char *argv[]) {
          --find is used to narrow down the keychain dump.
          */
         
-        if ([action isEqualToString:@"dump"] || [action isEqualToString:@"min-dump"]) {
+        if ([action isEqualToString:@"dump-keys"]) {
+            if (errSecSuccess != dumpKeys(action, find)) {
+                return EXIT_FAILURE;
+            }
+        }
+
+        else if ([action isEqualToString:@"dump"] || [action isEqualToString:@"min-dump"]) {
             
             if (errSecSuccess != dumpKeychain(action, find)) {
                 return EXIT_FAILURE;
